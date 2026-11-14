@@ -43,6 +43,17 @@ Turn the OAuth files of CLI agents (Antigravity / Codex / Claude Code / Gemini C
 
 本工具会：从 `id_token` 的 claims 取 email（`antigravity-<email>.json`）；把毫秒 `expiry_date` 转 RFC3339；补 `timestamp` / `expires_in`；`project_id` 缺省时不瞎填——CLIProxyAPI 首次请求会调 `loadCodeAssist` 自动获取，拿不到才报 `antigravity auth missing project_id`（此时手工补 `project_id`）。
 
+### project_id 怎么来（无需手动）
+
+参考 [AIClient2API](https://github.com/justlovemaki/AIClient2API) 的 `discoverProjectAndModels`，本工具会按顺序：
+
+1. 文件里有 `project_id` → 直接用；
+2. 浏览器直连 `POST v1internal:loadCodeAssist`（`daily-cloudcode-pa` → `cloudcode-pa` 回退），返回 `cloudaicompanionProject` 就用；
+3. 没有则 `v1internal:onboardUser` 轮询，取 `operation.response.cloudaicompanionProject.id`；
+4. 仍然失败（CORS / 网络 / 账号无资格）→ 生成同形态占位 ID `<adj>-<noun>-<5 位>`（与 AIClient2API 的 `generateProjectID` 一致）。
+
+请求不成功不会阻塞转换，只在结果里留 `pid_source` 和一条提示。「自动获取 project_id」开关可关闭；也可在输入框里手填覆盖。
+
 另有一个可选开关 **「Antigravity: bake v1/<JWT>.<sig>」**：Google 的 `ya29.*` 不是 JWT，部分只认 JWT 的网关读不到邮箱/过期时间；开启后会把 payload（`type/email/exp/iat/sub/azp`）烘成无签名 JWT，并把 `id_token` 头的 `kid` 拼在后面当签名前缀。不确定网关是否要求时保持关闭（保留原始 `ya29.*`）。
 
 ## 使用

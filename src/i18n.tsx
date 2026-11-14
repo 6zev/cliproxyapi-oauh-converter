@@ -81,6 +81,11 @@ const zh = {
   whyBody:
     '上游 internal/watcher/synthesizer/file.go 里 provider 直接取自 JSON 的 "type" 字段，缺失即留空 → 后台展示成 other。本工具显式写入 type，并按 internal/auth 下各 filename.go 的规则命名：Codex 用 codex-<sha256(account_id)[:8]>-<email>-<plan>.json，Claude 用 claude-<sha256(org_uuid)[:8]>-<email>.json，Antigravity 用 antigravity-<email>.json，xAI 用 xai-<email>-<sha256[:8]>.json。',
   antigravityNoteTitle: "Antigravity 常见报错对照",
+  optProjectAuto: "Antigravity：自动获取 project_id",
+  optProjectAutoDesc: "在浏览器里调 loadCodeAssist / onboardUser 探测，失败则生成本地占位 ID（同 AIClient2API 的做法）",
+  optProjectManual: "手动填写 project_id",
+  optProjectManualDesc: "留空则按上面的策略自动处理",
+  projectManualPlaceholder: "例如 useful-fuze-a1b2c",
   antigravityNote:
     "antigravity auth missing project_id：账号没在 Antigravity 里建过项目，CLIProxyAPI 首次请求会调 loadCodeAssist 自动获取；仍失败就手工在 JSON 里补 project_id。401 / 几分钟就过期：access_token 是 ya29.* 不是 JWT，开启上面的「烘成 v1/<JWT>.<sig>」再试。",
   footerWarn: "生成的 JSON 含 refresh_token，等同账号密码，别提交到公开仓库。",
@@ -164,6 +169,12 @@ const vi: Dict = {
   whyTitle: "Vì sao trước đây thành other và tên file ngẫu nhiên",
   whyBody:
     'Trong upstream internal/watcher/synthesizer/file.go, provider lấy thẳng từ trường "type" của JSON; thiếu là để rỗng nên hiện ra other. Công cụ này ghi rõ type và đặt tên theo từng filename.go trong internal/auth: Codex dùng codex-<sha256(account_id)[:8]>-<email>-<plan>.json, Claude dùng claude-<sha256(org_uuid)[:8]>-<email>.json, Antigravity dùng antigravity-<email>.json, xAI dùng xai-<email>-<sha256[:8]>.json.',
+  optProjectAuto: "Antigravity: tự lấy project_id",
+  optProjectAutoDesc:
+    "Gọi loadCodeAssist / onboardUser ngay trong trình duyệt; nếu thất bại sẽ sinh project_id tạm cùng dạng (giống AIClient2API)",
+  optProjectManual: "Tự nhập project_id",
+  optProjectManualDesc: "Để trống thì dùng chiến lược tự động ở trên",
+  projectManualPlaceholder: "ví dụ useful-fuze-a1b2c",
   antigravityNoteTitle: "Các lỗi Antigravity thường gặp",
   antigravityNote:
     "antigravity auth missing project_id: tài khoản chưa từng tạo project trong Antigravity; CLIProxyAPI sẽ gọi loadCodeAssist để tự lấy ở request đầu tiên. Nếu vẫn lỗi, điền tay project_id vào JSON. 401 / hết hạn sau vài phút: access_token là ya29.* chứ không phải JWT, hãy bật tuỳ chọn đóng gói v1/<JWT>.<sig> ở trên rồi thử lại.",
@@ -245,6 +256,12 @@ const en: Dict = {
   whyTitle: "Why it used to show other with a random filename",
   whyBody:
     'Upstream internal/watcher/synthesizer/file.go derives the provider straight from the JSON "type" field; when it is missing the value stays empty and the backend renders other. This tool writes type explicitly and follows each filename.go under internal/auth: Codex codex-<sha256(account_id)[:8]>-<email>-<plan>.json, Claude claude-<sha256(org_uuid)[:8]>-<email>.json, Antigravity antigravity-<email>.json, xAI xai-<email>-<sha256[:8]>.json.',
+  optProjectAuto: "Antigravity: auto project_id",
+  optProjectAutoDesc:
+    "Calls loadCodeAssist / onboardUser from the browser; if that fails it generates a placeholder project_id (same approach as AIClient2API)",
+  optProjectManual: "Custom project_id",
+  optProjectManualDesc: "Leave empty to use the automatic strategy above",
+  projectManualPlaceholder: "e.g. useful-fuze-a1b2c",
   antigravityNoteTitle: "Common Antigravity errors",
   antigravityNote:
     "antigravity auth missing project_id: the account never created an Antigravity project; CLIProxyAPI calls loadCodeAssist on the first request to fetch one. If it still fails, set project_id manually in the JSON. 401 / expires after a few minutes: the access_token is ya29.*, not a JWT — enable the bake option above and retry.",

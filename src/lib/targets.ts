@@ -42,6 +42,10 @@ export interface ConvertOptions {
   fillClaudeDeviceId: boolean;
   /** Antigravity：把 Google 真令牌烘成 v1/<JWT>.<sig>（兼容只认 JWT 的网关） */
   antigravityJwt: boolean;
+  /** project_id 获取策略：off 不动 / auto 浏览器里调 Google 接口探测 / generate 本地生成占位 */
+  antigravityProjectMode: "off" | "auto" | "generate";
+  /** 手填的 project_id（优先于一切） */
+  antigravityProjectId: string;
 }
 
 export interface ConvertResult {
@@ -227,7 +231,17 @@ export async function buildClaude(info: ClaudeInfo, opt: ConvertOptions): Promis
 
 /* ------------------------------------------------------------ antigravity */
 
-export async function buildAntigravity(info: AntigravityInfo, opt: ConvertOptions): Promise<ConvertResult> {
+export interface AntigravityProbeInfo {
+  projectId?: string;
+  source?: "loadCodeAssist" | "onboardUser" | "generated" | "manual" | "file";
+  error?: string;
+}
+
+export async function buildAntigravity(
+  info: AntigravityInfo,
+  opt: ConvertOptions,
+  probe: AntigravityProbeInfo = {},
+): Promise<ConvertResult> {
   const warnings: LocalText[] = [];
   const email = info.email || "";
   if (!email)
@@ -248,10 +262,21 @@ export async function buildAntigravity(info: AntigravityInfo, opt: ConvertOption
     });
   }
 
-  if (!info.projectId) {
+  const projectId = probe.projectId || info.projectId;
+  if (!projectId) {
     warnings.push({
-      zh: "没有 project_id：CLIProxyAPI 首次请求会调用 loadCodeAssist 自动获取；获取失败会报 antigravity auth missing project_id，此时手动补 project_id 即可",
-      en: "No project_id: CLIProxyAPI calls loadCodeAssist on the first request to fetch one. If that fails it reports antigravity auth missing project_id — fill project_id in manually.",
+      zh: "没有 project_id：CLIProxyAPI 首次请求会调用 loadCodeAssist 自动获取；获取失败会报 antigravity auth missing project_id，此时打开「project_id 自动探测」或手动填写",
+      en: "No project_id: CLIProxyAPI calls loadCodeAssist on the first request to fetch one. If that fails it reports antigravity auth missing project_id — enable project_id auto-detect or type one.",
+    });
+  } else if (probe.source === "generated") {
+    warnings.push({
+      zh: `接口探测失败（${probe.error ?? "unknown"}），已生成占位 project_id = ${projectId}：多数情况下 Antigravity 接受任意合法形态的 ID${""}`,
+      en: `API probe failed (${probe.error ?? "unknown"}); generated placeholder project_id = ${projectId}. Antigravity usually accepts any well-formed id.`,
+    });
+  } else if (probe.source === "loadCodeAssist" || probe.source === "onboardUser") {
+    warnings.push({
+      zh: `已探测到 project_id = ${projectId}（来源 ${probe.source}）`,
+      en: `Discovered project_id = ${projectId} (via ${probe.source})`,
     });
   }
   if (!info.refreshToken)
@@ -267,7 +292,7 @@ export async function buildAntigravity(info: AntigravityInfo, opt: ConvertOption
     expired: info.expiresAt || new Date(now + expiresIn * 1000).toISOString(),
     ...(info.refreshToken ? { refresh_token: info.refreshToken } : {}),
     ...(email ? { email } : {}),
-    ...(info.projectId ? { project_id: info.projectId } : {}),
+    ...(projectId ? { project_id: projectId } : {}),
   };
   if (opt.disabled) body["disabled"] = true;
 
@@ -276,7 +301,8 @@ export async function buildAntigravity(info: AntigravityInfo, opt: ConvertOption
     content: json(body),
     meta: {
       email: email || "-",
-      project_id: info.projectId || "-",
+      project_id: projectId || "-",
+      pid_source: probe.source || "file",
       expired: String(body["expired"]),
       mode: opt.antigravityJwt ? "v1-JWT" : "raw-ya29",
     },

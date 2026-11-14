@@ -309,6 +309,13 @@ input[type="text"]:focus {
   font-weight: 500;
 }
 
+.manual-input {
+  width: 100%;
+  margin-top: 6px;
+  font-family: var(--mono);
+  font-size: 12px;
+}
+
 .toggle .desc {
   font-size: 12px;
   color: var(--muted);

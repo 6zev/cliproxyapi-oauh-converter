@@ -21,6 +21,8 @@ import {
   type TargetId,
 } from "./targets";
 import { decodeJwt, isRecord, pickString } from "./utils";
+import { generateProjectId, resolveAntigravityProjectId } from "./antigravityProject";
+import type { AntigravityProbeInfo } from "./targets";
 
 export interface InputFile {
   id: string;
@@ -153,7 +155,8 @@ export async function convertFile(file: InputFile, opt: ConvertOptions): Promise
             "没有找到 access_token（Antigravity 的 oauth_creds.json 里必须有 access_token）",
             "No access_token found (Antigravity's oauth_creds.json must contain one)",
           );
-        result = await buildAntigravity(info, merged);
+        const probe = await resolveAntigravity(info, merged);
+        result = await buildAntigravity(info, merged, probe);
         break;
       }
       case "gemini-cli": {
@@ -195,6 +198,28 @@ export async function convertFile(file: InputFile, opt: ConvertOptions): Promise
     }
     return row;
   }
+}
+
+export type AntigravityProbe = AntigravityProbeInfo;
+
+/** 按选项决定要不要探测/生成 project_id（手填 > 文件里已有 > 探测 > 生成） */
+async function resolveAntigravity(
+  info: NonNullable<ReturnType<typeof parseAntigravity>>,
+  opt: ConvertOptions,
+): Promise<AntigravityProbe> {
+  const manual = (opt.antigravityProjectId ?? "").trim();
+  if (manual) return { projectId: manual, source: "manual" };
+  if (info.projectId) return { projectId: info.projectId, source: "file" };
+  if (opt.antigravityProjectMode === "off") return {};
+  if (!info.accessToken) return {};
+
+  // auto：先试探测，失败再生成占位；generate：只生成本地占位，不联网
+  if (opt.antigravityProjectMode === "generate") {
+    const generated = generateProjectId();
+    return { projectId: generated, source: "generated" };
+  }
+  const probe = await resolveAntigravityProjectId(info.accessToken, { allowGenerated: true });
+  return { projectId: probe.projectId || undefined, source: probe.source, error: probe.error };
 }
 
 /** 强制按 codex 解析：兼容 tokens 嵌套 / auth_tokens 旧格式 / 扁平三种 */

@@ -17,6 +17,8 @@ const DEFAULT_OPTIONS: ConvertOptions = {
   disabled: false,
   fillClaudeDeviceId: true,
   antigravityJwt: false,
+  antigravityProjectMode: "auto",
+  antigravityProjectId: "",
 };
 
 let seq = 0;
@@ -259,11 +261,33 @@ export default function App() {
               onChange={(v) => setOptions((o) => ({ ...o, fillClaudeDeviceId: v }))}
             />
             <Toggle
+              label={t.optProjectAuto}
+              desc={t.optProjectAutoDesc}
+              checked={options.antigravityProjectMode === "auto"}
+              onChange={(v) =>
+                setOptions((o) => ({ ...o, antigravityProjectMode: v ? "auto" : "off" }))
+              }
+            />
+            <Toggle
               label={t.optAntigravityJwt}
               desc={t.optAntigravityJwtDesc}
               checked={options.antigravityJwt}
               onChange={(v) => setOptions((o) => ({ ...o, antigravityJwt: v }))}
             />
+            <label className="toggle">
+              <span>
+                <span className="label">{t.optProjectManual}</span>
+                <br />
+                <span className="desc">{t.optProjectManualDesc}</span>
+                <input
+                  type="text"
+                  className="manual-input"
+                  placeholder={t.projectManualPlaceholder}
+                  value={options.antigravityProjectId}
+                  onChange={(e) => setOptions((o) => ({ ...o, antigravityProjectId: e.target.value.trim() }))}
+                />
+              </span>
+            </label>
           </div>
         </section>
 

@@ -56,6 +56,9 @@ const opt = {
   disabled: false,
   fillClaudeDeviceId: true,
   antigravityJwt: false,
+  // 测试里不联网：只测本地生成占位 ID 的分支（自动探测走真实 fetch，见 ui 测试说明）
+  antigravityProjectMode: "generate",
+  antigravityProjectId: "",
 };
 const files = readdirSync(join(root, "tests/fixtures")).map((name, i) => ({
   id: String(i),
@@ -111,6 +114,22 @@ expect(antigravity?.fileName === "antigravity-gg@google.test.json", "antigravity
 const agJson = JSON.parse(antigravity.result.content);
 expect(agJson.type === "antigravity" && agJson.project_id === "demo-project-123", "antigravity 含 type/project_id");
 expect(typeof agJson.timestamp === "number" && typeof agJson.expired === "string", "antigravity 含 timestamp/expired");
+
+// 可注入 fetch 的优雅降级：接口不可达时按选项生成占位 ID
+const probe = await convertAll(
+  files.filter((f) => f.name === "antigravity-real.json"),
+  { ...opt, antigravityProjectMode: "auto" },
+);
+const probeJson = JSON.parse(probe[0].result.content);
+expect(/^[a-z]+-[a-z]+-[0-9a-f]{5}$/.test(probeJson.project_id ?? ""), "auto 模式下接口失败会生成本地占位 project_id, got " + probeJson.project_id);
+expect(probe[0].status === "warn", "接口失败时状态是 warn 而不是 error");
+
+// 手填 project_id 优先
+const manual = await convertAll(
+  files.filter((f) => f.name === "antigravity-real.json"),
+  { ...opt, antigravityProjectId: "my-project-123" },
+);
+expect(JSON.parse(manual[0].result.content).project_id === "my-project-123", "手填 project_id 优先于探测");
 
 const realAntigravity = rows.find((r) => r.fileName === "antigravity-demo@gmail.com.json");
 expect(!!realAntigravity, "真实 oauth_creds.json → 文件名带邮箱 antigravity-demo@gmail.com.json");
