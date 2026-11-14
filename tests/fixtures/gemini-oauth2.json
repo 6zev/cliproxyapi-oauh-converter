@@ -1,0 +1,6 @@
+{
+  "access_token": "eyJhbGciOiAiUlMyNTYiLCAidHlwIjogIkpXVCJ9.eyJleHAiOiAxNzk0NjUyMjM3LCAiZW1haWwiOiAiZ2dAZ29vZ2xlLnRlc3QifQ.sig",
+  "refresh_token": "1//0g_gemini_demo",
+  "scope": "cloud-platform",
+  "expiry_date": 1794652237000
+}

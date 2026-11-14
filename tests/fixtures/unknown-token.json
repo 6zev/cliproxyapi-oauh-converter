@@ -1,0 +1,5 @@
+{
+  "access_token": "eyJhbGciOiJub25lIn0.eyJzdWIiOiJ4In0.sig",
+  "refresh_token": "opaque",
+  "token_type": "Bearer"
+}

@@ -1,0 +1,11 @@
+{
+  "auth_mode": "chatgpt",
+  "OPENAI_API_KEY": null,
+  "tokens": {
+    "id_token": "eyJhbGciOiAiUlMyNTYiLCAidHlwIjogIkpXVCJ9.eyJlbWFpbCI6ICJkZW1vQG9wZW5haS50ZXN0IiwgImh0dHBzOi8vYXBpLm9wZW5haS5jb20vYXV0aCI6IHsiY2hhdGdwdF9hY2NvdW50X2lkIjogImFjY3QtMTIzNDU2Nzg5MCIsICJjaGF0Z3B0X3BsYW5fdHlwZSI6ICJQbHVzIiwgImNoYXRncHRfdXNlcl9pZCI6ICJ1c2VyLWFiYyJ9fQ.sig",
+    "access_token": "eyJhbGciOiAiUlMyNTYiLCAidHlwIjogIkpXVCJ9.eyJleHAiOiAxNzk0NjUyMjM3LCAiaHR0cHM6Ly9hcGkub3BlbmFpLmNvbS9hdXRoIjogeyJjaGF0Z3B0X2FjY291bnRfaWQiOiAiYWNjdC0xMjM0NTY3ODkwIn19.sig",
+    "refresh_token": "rt_codex_demo",
+    "account_id": "acct-1234567890"
+  },
+  "last_refresh": "2026-11-14T10:00:00.000+07:00"
+}

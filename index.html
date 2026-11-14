@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="./favicon.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="dark" />
+    <meta
+      name="description"
+      content="把 Antigravity / Codex / Claude Code / Gemini CLI 的 OAuth 凭据转换成 CLIProxyAPI 可直接使用的 auth JSON，补 type 字段、按上游规则命名，不再显示成 other。纯浏览器运行。"
+    />
+    <title>CLIProxyAPI · OAuth 凭据转换器</title>
+    <!-- 中文字形：部分 Linux/无系统 CJK 字体的环境会渲染成方块，这里补一个可选的 Web 字体 -->
+    <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin />
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fontsource/noto-sans-sc@5.2.5/index.css" />
+    <style>
+      @supports (font-variation-settings: normal) {
+        body {
+          font-family: "Noto Sans SC", -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+            "Microsoft YaHei", sans-serif;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
