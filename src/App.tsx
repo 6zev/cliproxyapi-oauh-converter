@@ -314,12 +314,19 @@ export default function App() {
                         <td>
                           <div className="cell-file">{sourceName(files, row.id)}</div>
                           <div className="cell-src">
-                            {row.status === "error" ? row.message : row.status === "warn" ? row.message : t.statusOk}
+                            {row.status === "error"
+                              ? localize(row.messageText, locale, row.message)
+                              : row.status === "warn"
+                                ? t.statusWarn
+                                : t.statusOk}
                           </div>
                           {row.warnings.length > 0 && (
                             <ul className="warn-list">
                               {row.warnings.map((w, i) => (
-                                <li key={i}>{w}</li>
+                                <li key={i}>
+                                  <span className="warn-zh">{w.zh}</span>
+                                  <span className="warn-en">{w.en ?? w.zh}</span>
+                                </li>
                               ))}
                             </ul>
                           )}
@@ -467,6 +474,12 @@ export default function App() {
       </div>
     </I18nContext.Provider>
   );
+}
+
+/** 双语文案选择：zh 界面用中文，其它（vi/en）优先英文 */
+function localize(text: { zh: string; en?: string } | null, locale: Locale, fallback = ""): string {
+  if (!text) return fallback;
+  return locale === "zh" ? text.zh : (text.en ?? text.zh);
 }
 
 function sourceName(files: InputFile[], id: string): string {

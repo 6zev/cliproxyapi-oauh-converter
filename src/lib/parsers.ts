@@ -424,8 +424,11 @@ export interface AntigravityJwtPayload {
 }
 
 /** 用 Google 的 id_token 信息构造 v1/<jwt>.<sig> 形态的 access token */
-export function bakeAntigravityAccessToken(info: AntigravityInfo): { token: string; warnings: string[] } {
-  const warnings: string[] = [];
+export function bakeAntigravityAccessToken(info: AntigravityInfo): {
+  token: string;
+  warnings: { zh: string; en: string }[];
+} {
+  const warnings: { zh: string; en: string }[] = [];
   const now = Math.floor(Date.now() / 1000);
   const exp = jwtExp(info.idToken) || jwtExp(info.accessToken) || now + 2999;
   const payload: AntigravityJwtPayload = {
@@ -444,7 +447,10 @@ export function bakeAntigravityAccessToken(info: AntigravityInfo): { token: stri
   const jwt = unsignedJwt(payload as unknown as Record<string, unknown>);
   const kid = jwtKeyId(info.idToken);
   if (!kid) {
-    warnings.push("Google id_token 里没有 kid，无法还原 Google 的签名前缀（Google 可能直接拒绝这个 access token）");
+    warnings.push({
+      zh: "Google id_token 里没有 kid，无法还原 Google 的签名前缀（Google 可能直接拒绝这个 access token）",
+      en: "The Google id_token has no kid, so the signature prefix cannot be rebuilt (Google may reject this access token).",
+    });
   }
   return { token: `v1/${jwt}.${kid}`, warnings };
 }

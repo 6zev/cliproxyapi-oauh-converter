@@ -29,6 +29,7 @@ import {
 import type { SourceFormat } from "./detect";
 import { nowRfc3339, randomDeviceId } from "./utils";
 import { codexExpiryFromJwt } from "./parsers";
+import type { LocalText } from "./convert";
 
 export interface ConvertOptions {
   /** 目标 provider（单文件转换时用） */
@@ -47,7 +48,7 @@ export interface ConvertResult {
   fileName: string;
   content: string;
   meta: Record<string, string>;
-  warnings: string[];
+  warnings: LocalText[];
 }
 
 export type TargetId =
@@ -98,10 +99,14 @@ const DEFAULT_BASE_URL: Partial<Record<TargetId, string>> = {
 /* ------------------------------------------------------------------ codex */
 
 export async function buildCodex(info: CodexInfo, opt: ConvertOptions): Promise<ConvertResult> {
-  const warnings: string[] = [];
+  const warnings: LocalText[] = [];
   const email = info.email || "unknown";
-  if (!info.email) warnings.push("令牌里没有 email，文件名用 unknown 占位，建议改名或补字段");
-  if (!info.accountId) warnings.push("未能从 id_token / access_token 中解析 chatgpt_account_id，文件名缺少 hash 段");
+  if (!info.email) warnings.push({ zh: "令牌里没有 email，文件名用 unknown 占位，建议改名或补字段", en: "No email in the token; the filename falls back to unknown." });
+  if (!info.accountId)
+    warnings.push({
+      zh: "未能从 id_token / access_token 中解析 chatgpt_account_id，文件名缺少 hash 段",
+      en: "Could not derive chatgpt_account_id from the tokens; filename has no hash segment.",
+    });
 
   const planType = normalizePlanTypeForFilename(info.planType) ? info.planType : "free";
   const expiresAt = info.expiresAt || codexExpiryFromJwt(info.idToken) || codexExpiryFromJwt(info.accessToken);
@@ -151,17 +156,25 @@ export async function buildCodex(info: CodexInfo, opt: ConvertOptions): Promise<
 /* ----------------------------------------------------------------- claude */
 
 export async function buildClaude(info: ClaudeInfo, opt: ConvertOptions): Promise<ConvertResult> {
-  const warnings: string[] = [];
+  const warnings: LocalText[] = [];
   const email = info.email || "unknown";
-  if (!info.email) warnings.push("没有解析到 email：文件名会是 claude-<uuid hash>-unknown.json");
-  if (!info.refreshToken) warnings.push("没有 refresh_token，access token 过期后将无法自动续期");
+  if (!info.email)
+    warnings.push({ zh: "没有解析到 email：文件名会是 claude-<uuid hash>-unknown.json", en: "No email found: filename becomes claude-<uuid hash>-unknown.json" });
+  if (!info.refreshToken)
+    warnings.push({ zh: "没有 refresh_token，access token 过期后将无法自动续期", en: "No refresh_token: the access token cannot be renewed once it expires." });
   if (!info.organizationUuid && !info.accountUuid)
-    warnings.push("没有 organization/account uuid，文件名哈希段缺失（退化为 claude-<email>.json）");
+    warnings.push({
+      zh: "没有 organization/account uuid，文件名哈希段缺失（退化为 claude-<email>.json）",
+      en: "No organization/account uuid: filename falls back to claude-<email>.json",
+    });
 
   let deviceIds = info.deviceIds.filter((id) => /^[0-9a-f]{64}$/.test(id));
   if (deviceIds.length === 0 && opt.fillClaudeDeviceId) {
     deviceIds = [randomDeviceId()];
-    warnings.push("已自动生成 1 个 claude_device_ids 设备指纹（CLIProxyAPI 要求 64 位 hex）");
+    warnings.push({
+      zh: "已自动生成 1 个 claude_device_ids 设备指纹（CLIProxyAPI 要求 64 位 hex）",
+      en: "Generated one claude_device_ids fingerprint (CLIProxyAPI requires 64 hex chars).",
+    });
   }
 
   const expired = info.expiresAt || "";
@@ -215,9 +228,13 @@ export async function buildClaude(info: ClaudeInfo, opt: ConvertOptions): Promis
 /* ------------------------------------------------------------ antigravity */
 
 export async function buildAntigravity(info: AntigravityInfo, opt: ConvertOptions): Promise<ConvertResult> {
-  const warnings: string[] = [];
+  const warnings: LocalText[] = [];
   const email = info.email || "";
-  if (!email) warnings.push("文件里没有 email（Google id_token 也没带），文件名会退化为 antigravity-unknown.json");
+  if (!email)
+    warnings.push({
+      zh: "文件里没有 email（Google id_token 也没带），文件名会退化为 antigravity-unknown.json",
+      en: "No email in the file or its id_token; filename falls back to antigravity-unknown.json",
+    });
 
   let accessToken = info.accessToken;
   if (opt.antigravityJwt) {
@@ -225,15 +242,20 @@ export async function buildAntigravity(info: AntigravityInfo, opt: ConvertOption
     accessToken = baked.token;
     warnings.push(...baked.warnings);
   } else if (info.antigravityJwtStyle) {
-    warnings.push("access_token 看起来是 cc/cpa 的 v1/<JWT>.<sig> 形态，已原样保留；若网关要求 JWT，请在选项里开启“烘焙”");
+    warnings.push({
+      zh: "access_token 看起来是 cc/cpa 的 v1/<JWT>.<sig> 形态，已原样保留；若网关要求 JWT，请开启「烘成 v1/<JWT>.<sig>」选项",
+      en: "access_token already looks like cc/cpa v1/<JWT>.<sig> and was kept as-is; enable the bake option if your gateway requires a JWT.",
+    });
   }
 
   if (!info.projectId) {
-    warnings.push(
-      "没有 project_id：CLIProxyAPI 首次请求会调用 loadCodeAssist 自动获取；获取失败会报 antigravity auth missing project_id，此时手动补 project_id 即可",
-    );
+    warnings.push({
+      zh: "没有 project_id：CLIProxyAPI 首次请求会调用 loadCodeAssist 自动获取；获取失败会报 antigravity auth missing project_id，此时手动补 project_id 即可",
+      en: "No project_id: CLIProxyAPI calls loadCodeAssist on the first request to fetch one. If that fails it reports antigravity auth missing project_id — fill project_id in manually.",
+    });
   }
-  if (!info.refreshToken) warnings.push("没有 refresh_token：access token（约 1 小时）过期后需要重新导出");
+  if (!info.refreshToken)
+    warnings.push({ zh: "没有 refresh_token：access token（约 1 小时）过期后需要重新导出", en: "No refresh_token: you must export again in about an hour when the access token expires." });
 
   const now = Date.now();
   const expiresIn = info.expiresIn > 0 ? info.expiresIn : 3599;
@@ -265,10 +287,11 @@ export async function buildAntigravity(info: AntigravityInfo, opt: ConvertOption
 /* ---------------------------------------------------------------- gemini */
 
 export async function buildGemini(info: GeminiInfo, opt: ConvertOptions): Promise<ConvertResult> {
-  const warnings: string[] = [];
+  const warnings: LocalText[] = [];
   const email = info.email || "unknown";
-  if (!info.projectId) warnings.push("没有 project_id：CLIProxyAPI 启动时会调用 loadCodeAssist 自动补全");
-  if (!info.refreshToken) warnings.push("没有 refresh_token，过期后需要重新登录");
+  if (!info.projectId)
+    warnings.push({ zh: "没有 project_id：CLIProxyAPI 启动时会调用 loadCodeAssist 自动补全", en: "No project_id: CLIProxyAPI fills it in through loadCodeAssist." });
+  if (!info.refreshToken) warnings.push({ zh: "没有 refresh_token，过期后需要重新登录", en: "No refresh_token: you will need to sign in again after expiry." });
 
   const body: Record<string, unknown> = {
     type: "gemini-cli",
@@ -293,7 +316,7 @@ export async function buildGemini(info: GeminiInfo, opt: ConvertOptions): Promis
 interface GenericTargetSpec {
   type: TargetId;
   /** 校验必需字段，返回缺失项的中文提示 */
-  required: (info: GenericOAuthInfo) => string[];
+  required: (info: GenericOAuthInfo) => LocalText[];
   fileName: (info: GenericOAuthInfo) => Promise<string>;
   /** 额外字段（provider 专属） */
   extra?: (info: GenericOAuthInfo) => Record<string, unknown>;
@@ -302,7 +325,7 @@ interface GenericTargetSpec {
 const GENERIC_SPECS: Record<Exclude<TargetId, "codex" | "claude" | "antigravity" | "gemini-cli">, GenericTargetSpec> = {
   xai: {
     type: "xai",
-    required: (i) => (i.refreshToken ? [] : ["没有 refresh_token：xAI 需要它来续期 access token"]),
+    required: (i) => (i.refreshToken ? [] : [{ zh: "没有 refresh_token：xAI 需要它来续期 access token", en: "No refresh_token: xAI needs it to renew the access token." }]),
     fileName: (i) => xaiFileName(i.email, i.subject),
     extra: (i) => ({
       token_type: i.tokenType || "Bearer",
@@ -315,19 +338,19 @@ const GENERIC_SPECS: Record<Exclude<TargetId, "codex" | "claude" | "antigravity"
   },
   kimi: {
     type: "kimi",
-    required: (i) => (i.refreshToken ? [] : ["没有 refresh_token：Kimi 到期后需要重新设备码登录"]),
+    required: (i) => (i.refreshToken ? [] : [{ zh: "没有 refresh_token：Kimi 到期后需要重新设备码登录", en: "No refresh_token: Kimi needs a new device-code login after expiry." }]),
     fileName: () => Promise.resolve(kimiFileName("kimi")),
     extra: () => ({ token_type: "Bearer", domain: "kimi.com", base_url: DEFAULT_BASE_URL.kimi }),
   },
   "kimi-ai": {
     type: "kimi-ai",
-    required: (i) => (i.refreshToken ? [] : ["没有 refresh_token：Kimi 到期后需要重新设备码登录"]),
+    required: (i) => (i.refreshToken ? [] : [{ zh: "没有 refresh_token：Kimi 到期后需要重新设备码登录", en: "No refresh_token: Kimi needs a new device-code login after expiry." }]),
     fileName: () => Promise.resolve(kimiFileName("kimi-ai")),
     extra: () => ({ token_type: "Bearer", domain: "kimi.ai", base_url: DEFAULT_BASE_URL["kimi-ai"] }),
   },
   meta: {
     type: "meta",
-    required: (i) => (i.accessToken ? [] : ["没有 access_token"]),
+    required: (i) => (i.accessToken ? [] : [{ zh: "没有 access_token", en: "Missing access_token" }]),
     fileName: (i) => metaFileName(i.email, i.subject || i.name),
     extra: (i) => ({
       base_url: i.baseUrl || DEFAULT_BASE_URL.meta,
@@ -337,7 +360,7 @@ const GENERIC_SPECS: Record<Exclude<TargetId, "codex" | "claude" | "antigravity"
   },
   devin: {
     type: "devin",
-    required: (i) => (i.refreshToken || i.accessToken ? [] : ["没有 access_token / refresh_token"]),
+    required: (i) => (i.refreshToken || i.accessToken ? [] : [{ zh: "没有 access_token / refresh_token", en: "Missing access_token / refresh_token" }]),
     fileName: (i) => devinFileName(i.email, i.name, i.subject),
     extra: (i) => ({
       base_url: i.baseUrl || DEFAULT_BASE_URL.devin,

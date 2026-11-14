@@ -428,6 +428,12 @@ tbody tr:hover {
   color: var(--warn);
 }
 
+/* 警示文案按界面语言切换：中文界面显中文，vi/en 界面显英文 */
+:root[lang^="zh"] .warn-en,
+:root:not([lang^="zh"]) .warn-zh {
+  display: none;
+}
+
 .actions {
   display: flex;
   gap: 6px;

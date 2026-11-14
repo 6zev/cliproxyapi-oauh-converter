@@ -33,6 +33,12 @@ export interface InputFile {
 
 export type RowStatus = "ok" | "warn" | "error";
 
+/** 需要随界面语言切换的文案：zh 必填，en 缺失时回退 zh */
+export interface LocalText {
+  zh: string;
+  en?: string;
+}
+
 export interface Row {
   id: string;
   fileName: string;
@@ -44,7 +50,9 @@ export interface Row {
   userTarget: TargetId | "auto";
   status: RowStatus;
   message: string;
-  warnings: string[];
+  warnings: LocalText[];
+  /** 错误信息（同样是双语） */
+  messageText: LocalText | null;
   meta: Record<string, string>;
   result: ConvertResult | null;
 }
@@ -89,6 +97,7 @@ export async function convertFile(file: InputFile, opt: ConvertOptions): Promise
     userTarget,
     status: "error",
     message: "",
+    messageText: null,
     warnings: [],
     meta: {},
     result: null,
@@ -97,13 +106,18 @@ export async function convertFile(file: InputFile, opt: ConvertOptions): Promise
   if (det.format === "cliproxy") {
     row.status = "warn";
     row.fileName = file.name;
-    row.message = `已经是 CLIProxyAPI 格式（type=${det.providerHint}），无需转换`;
+    row.message = "已经是 CLIProxyAPI 格式，无需转换";
+    row.messageText = {
+      zh: `已经是 CLIProxyAPI 格式（type=${det.providerHint}），无需转换`,
+      en: `Already CLIProxyAPI format (type=${det.providerHint}); nothing to convert`,
+    };
     return row;
   }
 
   if (!target) {
     row.status = "error";
     row.message = det.reasons.join("；") || "无法识别，请手动选择目标 provider";
+    row.messageText = { zh: row.message, en: "Could not detect the format — pick a target provider manually." };
     return row;
   }
 
@@ -122,52 +136,63 @@ export async function convertFile(file: InputFile, opt: ConvertOptions): Promise
     switch (target) {
       case "codex": {
         const info = parseCodexForTarget(raw);
-        if (!info) throw new Error("没有找到 access_token / refresh_token");
+        if (!info) throw new LocalError("没有找到 access_token / refresh_token", "No access_token / refresh_token found");
         result = await buildCodex(info, merged);
         break;
       }
       case "claude": {
         const info = parseClaude(raw);
-        if (!info) throw new Error("没有找到 claudeAiOauth / access_token");
+        if (!info) throw new LocalError("没有找到 claudeAiOauth / access_token", "No claudeAiOauth / access_token found");
         result = await buildClaude(info, merged);
         break;
       }
       case "antigravity": {
         const info = parseAntigravity(raw);
-        if (!info) throw new Error("没有找到 access_token（Antigravity 的 oauth_creds.json 里必须有 access_token）");
+        if (!info)
+          throw new LocalError(
+            "没有找到 access_token（Antigravity 的 oauth_creds.json 里必须有 access_token）",
+            "No access_token found (Antigravity's oauth_creds.json must contain one)",
+          );
         result = await buildAntigravity(info, merged);
         break;
       }
       case "gemini-cli": {
         const info = parseGemini(raw);
-        if (!info) throw new Error("没有找到 access_token");
+        if (!info) throw new LocalError("没有找到 access_token", "No access_token found");
         result = await buildGemini(info, merged);
         break;
       }
       default: {
-        if (!isGenericTarget(target)) throw new Error(`不支持的目标 ${target}`);
+        if (!isGenericTarget(target)) throw new LocalError(`不支持的目标 ${target}`, `Unsupported target ${target}`);
         const info = parseGenericOAuth(raw);
-        if (!info) throw new Error("没有找到 access_token / refresh_token");
+        if (!info) throw new LocalError("没有找到 access_token / refresh_token", "No access_token / refresh_token found");
         result = await buildGeneric(target, info, merged);
         break;
       }
     }
-    if (!result) throw new Error("生成失败");
+    if (!result) throw new LocalError("生成失败", "Conversion failed");
     row.result = result;
     row.fileName = result.fileName;
     row.meta = result.meta;
     row.warnings = [...result.warnings];
     if (detectedTarget && target !== detectedTarget) {
-      row.warnings.push(
-        `内容看起来像 ${sourceFormatLabel(det.format)}，但你强制转成了 ${target}，请自行确认字段是否正确`,
-      );
+      row.warnings.push({
+        zh: `内容看起来像 ${sourceFormatLabel(det.format)}，但你强制转成了 ${target}，请自行确认字段是否正确`,
+        en: `Content looks like ${formatLabelEn(det.format)}, but you forced ${target}; double-check the fields.`,
+      });
     }
     row.status = row.warnings.length ? "warn" : "ok";
     row.message = row.warnings.length ? "已转换（有提醒）" : "已转换";
     return row;
   } catch (e) {
     row.status = "error";
-    row.message = (e as Error).message;
+    if (e instanceof LocalError) {
+      row.message = e.zh;
+      row.messageText = { zh: e.zh, en: e.en };
+    } else {
+      row.message = (e as Error).message;
+      row.messageText = { zh: row.message };
+    }
     return row;
   }
 }
@@ -197,6 +222,34 @@ function parseCodexForTarget(raw: unknown): CodexInfo | null {
     }
   }
   return null;
+}
+
+/** 带双语说明的转换错误 */
+export class LocalError extends Error {
+  zh: string;
+  en: string;
+  constructor(zh: string, en: string) {
+    super(zh);
+    this.zh = zh;
+    this.en = en;
+  }
+}
+
+const EN_LABELS: Record<SourceFormat, string> = {
+  codex: "Codex",
+  claude: "Claude Code",
+  antigravity: "Antigravity",
+  gemini: "Gemini CLI",
+  xai: "xAI Grok",
+  kimi: "Kimi",
+  meta: "Meta Muse",
+  devin: "Devin",
+  cliproxy: "CLIProxyAPI auth",
+  unknown: "unknown",
+};
+
+function formatLabelEn(f: SourceFormat): string {
+  return EN_LABELS[f];
 }
 
 export async function convertAll(files: InputFile[], opt: ConvertOptions): Promise<Row[]> {
