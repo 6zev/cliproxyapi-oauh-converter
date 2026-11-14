@@ -1,90 +1,82 @@
-# CLIProxyAPI · OAuth 凭据转换器
+# CLIProxyAPI · OAuth Converter
 
-把各 CLI Agent 的 OAuth 凭据转成 [CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI) `auths/` 目录可直接吃下的 JSON。
+Turn the OAuth files of CLI agents (Antigravity / Codex / Claude Code / Gemini CLI / xAI Grok / Kimi / Meta Muse / Devin) into JSON that [CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI) reads straight from its `auths/` directory.
 
-纯前端（React + Vite），可部署到 GitHub Pages，**凭据不经过任何服务器**。
+界面支持 **Tiếng Việt / 中文 / English**，深色 / 浅色主题，纯前端（React + Vite），凭据不经过任何服务器。
+
+> Live: https://6zev.github.io/cliproxyapi-oauh-converter/
 
 ## 解决什么问题
 
-直接把 OAuth 文件丢进 CLIProxyAPI：
-
-- 后台列表里 Provider 显示成 `other`；
-- 文件名 / 标识是一串随机串，看不出是哪个账号。
-
-原因（上游 v8 源码）：
+直接把 OAuth 文件丢进 CLIProxyAPI：Provider 显示成 `other`、文件名是一串随机串。原因（上游 v8 源码）：
 
 | 位置 | 行为 |
 | --- | --- |
-| `internal/watcher/synthesizer/file.go` | `provider := strings.ToLower(metadata["type"])`，字段缺失 → 保留空值 → 展示成 `other`；`gemini` 会被重写成 `gemini-cli` |
+| `internal/watcher/synthesizer/file.go` | `provider := strings.ToLower(metadata["type"])`，缺失即留空 → 渲染成 `other`；`gemini` 会被改写成 `gemini-cli` |
 | `internal/auth/antigravity/filename.go` | `antigravity-<email>.json` |
-| `internal/auth/codex/filename.go` | `codex-<sha256(account_id)[:8]>-<email>-<plan>.json`（无 hash 时省略，无 plan 时省略） |
-| `internal/auth/claude/filename.go` | `claude-<sha256(organization_uuid 或 account_uuid)[:8]>-<email>.json` |
+| `internal/auth/codex/filename.go` | `codex-<sha256(account_id)[:8]>-<email>-<plan>.json` |
+| `internal/auth/claude/filename.go` | `claude-<sha256(org_uuid 或 account_uuid)[:8]>-<email>.json` |
+| `internal/auth/xai/filename.go` | `xai-<email>-<sha256("email\0"+email)[:8]>`（8 字节 hash） |
 | `internal/auth/claude/identity.go` | `claude_device_ids` 必须是 64 位小写 hex |
-
-本工具按上面的规则补齐 `type`、按上游规则生成文件名，所以输出 `codex-4fa42ae6-user@example.com-plus.json` 这种名字，不是 `<random>-email.json`。
 
 ## 支持的输入 → 输出
 
-| 输入 | 识别依据 | 输出 `type` |
-| --- | --- | --- |
-| Codex CLI `~/.codex/auth.json`（`tokens.{id_token,access_token,refresh_token,account_id}`） | 内容里的 `tokens` 对象 + 有 `id_token` | `codex` |
-| Claude Code `~/.claude/.credentials.json`（`claudeAiOauth`） | 内容里的 `claudeAiOauth` | `claude` |
-| Antigravity `oauth_creds.json` / 带 `token` 包装的 Google 凭据 | `access_token` + Google 特征 | `antigravity` |
-| Gemini CLI `oauth2` token（`access_token` + `expiry_date`） | Google OAuth 特征 | `gemini-cli` |
-| 扁平结构（`access_token` / `id_token` 混放） | JWT claims（`https://api.openai.com/auth`、`https://api.anthropic.com/oauth/*`）；**注意**：没带 `id_token` 且无其他特征的纯 `access_token` 会被判为 Gemini（因为 OpenAI 的 access_token 也是 RS256 JWT），此时用下拉框手动改目标 |
-| 已经是 CLIProxyAPI 格式 | `type` 属于已知 provider | 跳过，提示无需转换 |
+| 输入 | 输出 `type` |
+| --- | --- |
+| Codex CLI `~/.codex/auth.json`（`tokens.*`）、`credentials.*`、扁平结构 | `codex` |
+| Claude Code `~/.claude/.credentials.json`（`claudeAiOauth`） | `claude` |
+| Antigravity `oauth_creds.json`（`access_token` + `id_token` + `expiry_date`，无 email/project） | `antigravity` |
+| Gemini CLI `oauth2` token | `gemini-cli` |
+| xAI Grok / Kimi / Meta Muse / Devin 的导出文件 | `xai` / `kimi` / `kimi-ai` / `meta` / `devin` |
+| 已经是 CLIProxyAPI 格式（type + 上游专属字段） | 跳过 |
 
-识别失败时会报错并提示手动选择目标 provider，不会静默生成垃圾文件。
+识别优先看内容（JWT claims、`ya29.*`、`claudeAiOauth`、`tokens`、品牌关键字），文件名只作兜底；识别失败会提示手动选目标，不会静默生成垃圾文件。
+
+## Antigravity 要点
+
+真实 `oauth_creds.json` 长这样，**没有 email 和 project_id**：
+
+```json
+{ "access_token": "ya29...", "scope": "...", "token_type": "Bearer",
+  "id_token": "eyJ...", "expiry_date": 1794655045605, "refresh_token": "1//..." }
+```
+
+本工具会：从 `id_token` 的 claims 取 email（`antigravity-<email>.json`）；把毫秒 `expiry_date` 转 RFC3339；补 `timestamp` / `expires_in`；`project_id` 缺省时不瞎填——CLIProxyAPI 首次请求会调 `loadCodeAssist` 自动获取，拿不到才报 `antigravity auth missing project_id`（此时手工补 `project_id`）。
+
+另有一个可选开关 **「Antigravity: bake v1/<JWT>.<sig>」**：Google 的 `ya29.*` 不是 JWT，部分只认 JWT 的网关读不到邮箱/过期时间；开启后会把 payload（`type/email/exp/iat/sub/azp`）烘成无签名 JWT，并把 `id_token` 头的 `kid` 拼在后面当签名前缀。不确定网关是否要求时保持关闭（保留原始 `ya29.*`）。
 
 ## 使用
 
 ```bash
 npm install
-npm run dev        # 本地开发
-npm run test       # 纯 Node 冒烟测试（不需要浏览器）
-npm run build      # 产出 dist/
+npm run dev      # 本地开发
+npm test         # Node 冒烟测试（tsc 编译 src/lib 后断言，无需浏览器）
+npm run build    # 产出 dist/
 npm run preview
 ```
 
-页面里：拖拽 / 多选 / 粘贴 JSON → 每行可单独改目标 provider → 打包下载 zip 或逐个复制。
-
-### 输出选项
-
-- **写成 CLIProxyAPI 扁平结构**（默认开）：写 `type` + 扁平字段。关掉则保留原生嵌套（Codex 的 `tokens`、Claude 的 `claudeAiOauth`），这两种上游也能读，只是后台列表信息更少。
-- **转换后默认禁用**：写 `disabled: true`，导入 WebUI 后手动启用，避免误拉起账号。
-- **自动补 Claude 设备指纹**：缺 `claude_device_ids` 时生成 1 个 64 位 hex。
-
-### 导入 CLIProxyAPI
-
-1. 解压出的 `.json` 全部放进 auths 目录（默认 `~/.cli-proxy-api`，或 `config.yaml` 里的 `auth-dir`）；
-2. 文件监听会自动加载，或重启 `cli-proxy-api` / 在 WebUI 里刷新凭据；
-3. Provider 列应显示 `codex` / `claude` / `antigravity` / `gemini-cli`。
+页面：拖拽 / 多选 / 粘贴 JSON → 每行可改目标 provider → 单文件下载、打包 zip 或复制。
 
 ## 部署到 GitHub Pages
 
-仓库已带 `.github/workflows/deploy.yml`：
-
-1. push 到 `main` / `master`；
-2. Settings → Pages → Source 选 **GitHub Actions**；
-3. workflow 会自动算 `BASE_PATH`（`<user>.github.io` 用 `/`，普通仓库用 `/<repo>/`），跑类型检查 + 冒烟测试 + 构建 + 部署。
-
-本地手动构建同理：`BASE_PATH=/<repo>/ npm run build`。
+`.github/workflows/deploy.yml` 会在 push 到 `main` 时：装依赖 → `tsc -b` → 跑冒烟测试 → 构建（`BASE_PATH` 按仓库名自动注入）→ 生成 `404.html` → 部署。Settings → Pages → Source 选 **GitHub Actions** 即可。
 
 ## 目录
 
 ```
 src/
-  App.tsx            # 页面
-  lib/detect.ts      # 输入识别（内容优先，文件名兜底）
-  lib/parsers.ts     # 各 provider 字段抽取（含 JWT 解包）
+  App.tsx            # 页面（含语言/主题切换）
+  i18n.tsx           # zh / vi / en 三语字典（漏 key 会编译报错）
+  lib/detect.ts      # 输入识别
+  lib/parsers.ts     # 各 provider 字段抽取 + Antigravity JWT 烘焙
   lib/targets.ts     # 生成 CLIProxyAPI auth JSON
-  lib/filename.ts    # 上游文件名规则（sha256 前缀 + email + plan）
-  lib/convert.ts     # 批量转换流水线
-  lib/zip.ts         # 零依赖 zip 打包下载
-tests/run.mjs        # tsc 编译 lib 后用 Node 跑断言
-tests/fixtures/      # 各类型样例（内含假 token）
+  lib/filename.ts    # 上游文件名规则
+  lib/convert.ts     # 批量流水线
+  lib/zip.ts         # 零依赖 zip
+tests/run.mjs        # 冒烟测试
+tests/fixtures/      # 各类型样例（假 token）
 ```
 
 ## 注意
 
-生成的 JSON 含 `refresh_token`，等同于账号密码：不要提交到公开仓库，不要发群，不要贴 issue。
+生成的 JSON 含 `refresh_token`，等同账号密码：别提交到公开仓库，别贴 issue。

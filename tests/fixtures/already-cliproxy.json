@@ -1,5 +1,6 @@
 {
-  "type": "xai",
-  "access_token": "x",
-  "refresh_token": "y"
+  "type": "antigravity",
+  "access_token": "ya29.x",
+  "refresh_token": "y",
+  "project_id": "p-1"
 }

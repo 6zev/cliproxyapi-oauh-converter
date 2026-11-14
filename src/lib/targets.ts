@@ -5,25 +5,33 @@
  *  - internal/watcher/synthesizer/file.go: provider = strings.ToLower(metadata["type"])，
  *    不认识 → 在 WebUI 里显示成 "other"；
  *  - 文件必须放在 auths 目录（默认 ~/.cli-proxy-api），文件名决定 Auth.ID / 列表项；
- *  - codex 用自己的 filename.go 规则，其它 provider 只要 <provider>-<email>.json 即可；
- *  - codex 支持 {"tokens": {...}, "last_refresh": ...} 嵌套（CLI 原生格式），
- *    claude 支持 {"claudeAiOauth": {...}}（Claude Code 原生格式），
- *    直接丢进去也能解析，只是列表里看不到 email/plan 等友好信息。
+ *  - codex / claude 有自己的 filename.go 规则，其它 provider 只要 <provider>-<email>.json 即可。
  */
-import type { AntigravityInfo, ClaudeInfo, CodexInfo, GeminiInfo } from "./parsers";
+import type {
+  AntigravityInfo,
+  ClaudeInfo,
+  CodexInfo,
+  GeminiInfo,
+  GenericOAuthInfo,
+} from "./parsers";
+import { bakeAntigravityAccessToken } from "./parsers";
 import {
   antigravityFileName,
   claudeFileName,
   codexFileName,
+  devinFileName,
   geminiFileName,
+  kimiFileName,
+  metaFileName,
   normalizePlanTypeForFilename,
+  xaiFileName,
 } from "./filename";
 import type { SourceFormat } from "./detect";
 import { nowRfc3339, randomDeviceId } from "./utils";
 import { codexExpiryFromJwt } from "./parsers";
 
 export interface ConvertOptions {
-  /** 目标 provider */
+  /** 目标 provider（单文件转换时用） */
   provider: TargetId;
   /** 是否写成 CLIProxyAPI 自己的扁平结构（true）还是保留 CLI 原生结构（false） */
   canonical: boolean;
@@ -31,6 +39,8 @@ export interface ConvertOptions {
   disabled: boolean;
   /** Claude 设备指纹缺失时自动补一个 */
   fillClaudeDeviceId: boolean;
+  /** Antigravity：把 Google 真令牌烘成 v1/<JWT>.<sig>（兼容只认 JWT 的网关） */
+  antigravityJwt: boolean;
 }
 
 export interface ConvertResult {
@@ -40,16 +50,50 @@ export interface ConvertResult {
   warnings: string[];
 }
 
-export type TargetId = "codex" | "claude" | "antigravity" | "gemini-cli";
+export type TargetId =
+  | "codex"
+  | "claude"
+  | "antigravity"
+  | "gemini-cli"
+  | "xai"
+  | "kimi"
+  | "kimi-ai"
+  | "meta"
+  | "devin";
 
-export const TARGETS: { id: TargetId; label: string; hint: string; tag: string }[] = [
+export interface TargetMeta {
+  id: TargetId;
+  label: string;
+  hint: string;
+  tag: string;
+}
+
+/** 展示顺序：常用 → 少见 */
+export const TARGETS: TargetMeta[] = [
   { id: "codex", label: "Codex", hint: "OpenAI CLI / ChatGPT 账号", tag: "type: codex" },
   { id: "claude", label: "Claude", hint: "Claude Code / Anthropic OAuth", tag: "type: claude" },
   { id: "antigravity", label: "Antigravity", hint: "Google Cloud Code / Gemini 4", tag: "type: antigravity" },
   { id: "gemini-cli", label: "Gemini CLI", hint: "gemini-cli oauth2 token", tag: "type: gemini-cli" },
+  { id: "xai", label: "xAI Grok", hint: "grok CLI / xai OAuth", tag: "type: xai" },
+  { id: "kimi", label: "Kimi", hint: "kimi.com coding 套餐", tag: "type: kimi" },
+  { id: "kimi-ai", label: "Kimi.ai", hint: "kimi.ai 国际域", tag: "type: kimi-ai" },
+  { id: "meta", label: "Meta Muse", hint: "Meta Model API / Muse Code", tag: "type: meta" },
+  { id: "devin", label: "Devin", hint: "Devin CLI 账号", tag: "type: devin" },
 ];
 
+export const TARGET_IDS = TARGETS.map((t) => t.id);
+
 const json = (v: unknown) => JSON.stringify(v, null, 2) + "\n";
+
+/** 非数字型 provider 的默认 base_url（取自上游 constant） */
+const DEFAULT_BASE_URL: Partial<Record<TargetId, string>> = {
+  "gemini-cli": "https://daily-cloudcode-pa.googleapis.com",
+  xai: "https://api.x.ai/v1",
+  kimi: "https://api.kimi.com/coding",
+  "kimi-ai": "https://api.kimi.ai/coding",
+  meta: "https://api.meta.ai/v1",
+  devin: "https://api.devin.ai",
+};
 
 /* ------------------------------------------------------------------ codex */
 
@@ -132,7 +176,6 @@ export async function buildClaude(info: ClaudeInfo, opt: ConvertOptions): Promis
       email,
       type: "claude",
       expired,
-      // 以下为 CLIProxyAPI 的 ClaudeTokenStorage 扩展字段
       ...(info.accountUuid ? { account_uuid: info.accountUuid } : {}),
       ...(info.organizationUuid ? { organization_uuid: info.organizationUuid } : {}),
       ...(info.organizationName ? { organization_name: info.organizationName } : {}),
@@ -173,28 +216,48 @@ export async function buildClaude(info: ClaudeInfo, opt: ConvertOptions): Promis
 
 export async function buildAntigravity(info: AntigravityInfo, opt: ConvertOptions): Promise<ConvertResult> {
   const warnings: string[] = [];
-  const email = info.email || "unknown";
-  if (!info.email) warnings.push("没有 email：文件名退化为 antigravity.json 或 antigravity-unknown.json");
-  if (!info.projectId) warnings.push("没有 project_id：CLIProxyAPI 首次请求时会自行 loadCodeAssist 获取");
+  const email = info.email || "";
+  if (!email) warnings.push("文件里没有 email（Google id_token 也没带），文件名会退化为 antigravity-unknown.json");
+
+  let accessToken = info.accessToken;
+  if (opt.antigravityJwt) {
+    const baked = bakeAntigravityAccessToken(info);
+    accessToken = baked.token;
+    warnings.push(...baked.warnings);
+  } else if (info.antigravityJwtStyle) {
+    warnings.push("access_token 看起来是 cc/cpa 的 v1/<JWT>.<sig> 形态，已原样保留；若网关要求 JWT，请在选项里开启“烘焙”");
+  }
+
+  if (!info.projectId) {
+    warnings.push(
+      "没有 project_id：CLIProxyAPI 首次请求会调用 loadCodeAssist 自动获取；获取失败会报 antigravity auth missing project_id，此时手动补 project_id 即可",
+    );
+  }
+  if (!info.refreshToken) warnings.push("没有 refresh_token：access token（约 1 小时）过期后需要重新导出");
 
   const now = Date.now();
   const expiresIn = info.expiresIn > 0 ? info.expiresIn : 3599;
   const body: Record<string, unknown> = {
     type: "antigravity",
-    access_token: info.accessToken,
-    refresh_token: info.refreshToken,
+    access_token: accessToken,
     expires_in: expiresIn,
     timestamp: now,
     expired: info.expiresAt || new Date(now + expiresIn * 1000).toISOString(),
-    ...(email !== "unknown" ? { email } : {}),
+    ...(info.refreshToken ? { refresh_token: info.refreshToken } : {}),
+    ...(email ? { email } : {}),
     ...(info.projectId ? { project_id: info.projectId } : {}),
   };
   if (opt.disabled) body["disabled"] = true;
 
   return {
-    fileName: antigravityFileName(info.email),
+    fileName: antigravityFileName(email || "unknown"),
     content: json(body),
-    meta: { email, project_id: info.projectId || "-", expired: String(body["expired"]) },
+    meta: {
+      email: email || "-",
+      project_id: info.projectId || "-",
+      expired: String(body["expired"]),
+      mode: opt.antigravityJwt ? "v1-JWT" : "raw-ya29",
+    },
     warnings,
   };
 }
@@ -225,6 +288,102 @@ export async function buildGemini(info: GeminiInfo, opt: ConvertOptions): Promis
   };
 }
 
+/* --------------------------------------------- xai / kimi / meta / devin */
+
+interface GenericTargetSpec {
+  type: TargetId;
+  /** 校验必需字段，返回缺失项的中文提示 */
+  required: (info: GenericOAuthInfo) => string[];
+  fileName: (info: GenericOAuthInfo) => Promise<string>;
+  /** 额外字段（provider 专属） */
+  extra?: (info: GenericOAuthInfo) => Record<string, unknown>;
+}
+
+const GENERIC_SPECS: Record<Exclude<TargetId, "codex" | "claude" | "antigravity" | "gemini-cli">, GenericTargetSpec> = {
+  xai: {
+    type: "xai",
+    required: (i) => (i.refreshToken ? [] : ["没有 refresh_token：xAI 需要它来续期 access token"]),
+    fileName: (i) => xaiFileName(i.email, i.subject),
+    extra: (i) => ({
+      token_type: i.tokenType || "Bearer",
+      expires_in: i.expiresIn,
+      auth_kind: "oauth",
+      ...(i.subject ? { sub: i.subject } : {}),
+      base_url: i.baseUrl || DEFAULT_BASE_URL.xai,
+      ...(i.clientId ? { client_id: i.clientId } : {}),
+    }),
+  },
+  kimi: {
+    type: "kimi",
+    required: (i) => (i.refreshToken ? [] : ["没有 refresh_token：Kimi 到期后需要重新设备码登录"]),
+    fileName: () => Promise.resolve(kimiFileName("kimi")),
+    extra: () => ({ token_type: "Bearer", domain: "kimi.com", base_url: DEFAULT_BASE_URL.kimi }),
+  },
+  "kimi-ai": {
+    type: "kimi-ai",
+    required: (i) => (i.refreshToken ? [] : ["没有 refresh_token：Kimi 到期后需要重新设备码登录"]),
+    fileName: () => Promise.resolve(kimiFileName("kimi-ai")),
+    extra: () => ({ token_type: "Bearer", domain: "kimi.ai", base_url: DEFAULT_BASE_URL["kimi-ai"] }),
+  },
+  meta: {
+    type: "meta",
+    required: (i) => (i.accessToken ? [] : ["没有 access_token"]),
+    fileName: (i) => metaFileName(i.email, i.subject || i.name),
+    extra: (i) => ({
+      base_url: i.baseUrl || DEFAULT_BASE_URL.meta,
+      ...(i.subject ? { sub: i.subject } : {}),
+      ...(i.name ? { name: i.name } : {}),
+    }),
+  },
+  devin: {
+    type: "devin",
+    required: (i) => (i.refreshToken || i.accessToken ? [] : ["没有 access_token / refresh_token"]),
+    fileName: (i) => devinFileName(i.email, i.name, i.subject),
+    extra: (i) => ({
+      base_url: i.baseUrl || DEFAULT_BASE_URL.devin,
+      ...(i.name ? { name: i.name } : {}),
+    }),
+  },
+};
+
+export async function buildGeneric(
+  target: keyof typeof GENERIC_SPECS,
+  info: GenericOAuthInfo,
+  opt: ConvertOptions,
+): Promise<ConvertResult> {
+  const spec = GENERIC_SPECS[target];
+  const warnings = [...spec.required(info)];
+  const email = info.email || "unknown";
+
+  const body: Record<string, unknown> = {
+    type: spec.type,
+    access_token: info.accessToken,
+    ...(info.refreshToken ? { refresh_token: info.refreshToken } : {}),
+    ...(info.idToken ? { id_token: info.idToken } : {}),
+    ...(info.expiresAt ? { expired: info.expiresAt } : {}),
+    ...(info.scope ? { scope: info.scope } : {}),
+    ...(info.email ? { email: info.email } : {}),
+    last_refresh: nowRfc3339(),
+    ...(spec.extra ? spec.extra(info) : {}),
+  };
+  if (opt.disabled) body["disabled"] = true;
+
+  return {
+    fileName: await spec.fileName(info),
+    content: json(body),
+    meta: {
+      email,
+      expired: info.expiresAt || "-",
+      ...(info.subject ? { sub: info.subject } : {}),
+    },
+    warnings,
+  };
+}
+
+export function isGenericTarget(id: TargetId): id is keyof typeof GENERIC_SPECS {
+  return id in GENERIC_SPECS;
+}
+
 export function sourceFormatLabel(f: SourceFormat): string {
   switch (f) {
     case "codex":
@@ -235,6 +394,14 @@ export function sourceFormatLabel(f: SourceFormat): string {
       return "Antigravity / Google OAuth";
     case "gemini":
       return "Gemini CLI / Google token";
+    case "xai":
+      return "xAI Grok OAuth";
+    case "kimi":
+      return "Kimi OAuth";
+    case "meta":
+      return "Meta Muse OAuth";
+    case "devin":
+      return "Devin 凭据";
     case "cliproxy":
       return "CLIProxyAPI auth 文件";
     default:

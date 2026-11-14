@@ -1,11 +1,20 @@
 /** 批量转换入口：识别 → 解析 → 生成 CLIProxyAPI auth JSON */
 import { detectFormat, type SourceFormat } from "./detect";
-import { parseAntigravity, parseClaude, parseCodex, parseGemini, type CodexInfo } from "./parsers";
+import {
+  parseAntigravity,
+  parseClaude,
+  parseCodex,
+  parseGemini,
+  parseGenericOAuth,
+  type CodexInfo,
+} from "./parsers";
 import {
   buildAntigravity,
   buildClaude,
   buildCodex,
   buildGemini,
+  buildGeneric,
+  isGenericTarget,
   sourceFormatLabel,
   type ConvertOptions,
   type ConvertResult,
@@ -45,11 +54,20 @@ const FORMAT_TO_TARGET: Record<SourceFormat, TargetId | null> = {
   claude: "claude",
   antigravity: "antigravity",
   gemini: "gemini-cli",
+  xai: "xai",
+  kimi: "kimi",
+  meta: "meta",
+  devin: "devin",
   cliproxy: null,
   unknown: null,
 };
 
-export function detectTarget(file: InputFile): { target: TargetId | null; format: SourceFormat; confidence: Row["formatConfidence"]; reasons: string[] } {
+export function detectTarget(file: InputFile): {
+  target: TargetId | null;
+  format: SourceFormat;
+  confidence: Row["formatConfidence"];
+  reasons: string[];
+} {
   const det = detectFormat(file.text, file.name);
   return { target: FORMAT_TO_TARGET[det.format], format: det.format, confidence: det.confidence, reasons: det.reasons };
 }
@@ -116,7 +134,7 @@ export async function convertFile(file: InputFile, opt: ConvertOptions): Promise
       }
       case "antigravity": {
         const info = parseAntigravity(raw);
-        if (!info) throw new Error("没有找到 access_token");
+        if (!info) throw new Error("没有找到 access_token（Antigravity 的 oauth_creds.json 里必须有 access_token）");
         result = await buildAntigravity(info, merged);
         break;
       }
@@ -124,6 +142,13 @@ export async function convertFile(file: InputFile, opt: ConvertOptions): Promise
         const info = parseGemini(raw);
         if (!info) throw new Error("没有找到 access_token");
         result = await buildGemini(info, merged);
+        break;
+      }
+      default: {
+        if (!isGenericTarget(target)) throw new Error(`不支持的目标 ${target}`);
+        const info = parseGenericOAuth(raw);
+        if (!info) throw new Error("没有找到 access_token / refresh_token");
+        result = await buildGeneric(target, info, merged);
         break;
       }
     }
@@ -147,7 +172,7 @@ export async function convertFile(file: InputFile, opt: ConvertOptions): Promise
   }
 }
 
-/** 强制按 codex 解析：兼容 tokens 嵌套 / credentials / 扁平三种 */
+/** 强制按 codex 解析：兼容 tokens 嵌套 / auth_tokens 旧格式 / 扁平三种 */
 function parseCodexForTarget(raw: unknown): CodexInfo | null {
   const direct = parseCodex(raw);
   if (direct) return direct;

@@ -1,0 +1,8 @@
+{
+  "access_token": "ya29.DEMO_FAKE_ACCESS_TOKEN_NOT_REAL_0000",
+  "scope": "https://www.googleapis.com/auth/cloud-platform https://www.googleapis.com/auth/userinfo.email openid",
+  "token_type": "Bearer",
+  "id_token": "eyJhbGciOiAiUlMyNTYiLCAia2lkIjogIjljNGI4ZjFkN2EyZTZiM2M1ZDhmMGExYjJjM2Q0ZTVmNmE3YjhjOWQiLCAidHlwIjogIkpXVCJ9.eyJpc3MiOiAiaHR0cHM6Ly9hY2NvdW50cy5nb29nbGUuY29tIiwgImF6cCI6ICIwMDAwMDAwMDAwMDAtZGVtby5hcHBzLmdvb2dsZXVzZXJjb250ZW50LmNvbSIsICJhdWQiOiAiMDAwMDAwMDAwMDAwLWRlbW8uYXBwcy5nb29nbGV1c2VyY29udGVudC5jb20iLCAic3ViIjogIjEwMDAwMDAwMDAwMDAwMDAwMDAwMSIsICJlbWFpbCI6ICJkZW1vQGdtYWlsLmNvbSIsICJlbWFpbF92ZXJpZmllZCI6IHRydWUsICJpYXQiOiAxNzk0NjUxOTMyLCAiZXhwIjogMTc5NDY1NTUzMn0.U0lHTkFUVVJFX1BMQUNFSE9MREVS",
+  "expiry_date": 1794659132000,
+  "refresh_token": "1//DEMO_FAKE_REFRESH_TOKEN_NOT_REAL"
+}

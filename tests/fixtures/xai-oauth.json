@@ -1,0 +1,7 @@
+{
+  "access_token": "eyJhbGciOiAiUlMyNTYiLCAidHlwIjogIkpXVCJ9.eyJpc3MiOiAiaHR0cHM6Ly9hY2NvdW50cy54LmFpIiwgImV4cCI6IDE3OTQ2NTUzNzYsICJlbWFpbCI6ICJncm9rQHgudGVzdCIsICJzdWIiOiAieGFpLXN1Yi0xIn0.sig",
+  "refresh_token": "rt_xai_demo",
+  "id_token": "eyJhbGciOiAiUlMyNTYiLCAidHlwIjogIkpXVCJ9.eyJlbWFpbCI6ICJncm9rQHgudGVzdCIsICJzdWIiOiAieGFpLXN1Yi0xIiwgImlzcyI6ICJodHRwczovL2FjY291bnRzLnguYWkifQ.sig",
+  "token_type": "Bearer",
+  "expires_in": 3600
+}

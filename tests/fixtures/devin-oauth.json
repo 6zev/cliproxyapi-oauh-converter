@@ -1,0 +1,6 @@
+{
+  "access_token": "devin_at",
+  "refresh_token": "devin_rt",
+  "email": "dev@devin.test",
+  "base_url": "https://api.devin.ai"
+}

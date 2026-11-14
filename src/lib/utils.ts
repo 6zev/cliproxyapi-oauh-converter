@@ -30,7 +30,11 @@ export function decodeJwt(token: unknown): JwtPayload | null {
   }
 }
 
-/** 深度取值：get(obj, "a.b.c") */
+/**
+ * 深度取值：dig(obj, "a.b.c")。
+ * 注意：JWT claim 的 key 本身可能带点（如 "https://api.openai.com/auth"），
+ * 这种必须直接用 obj["key"] 取，不能走 dig，否则会被按点切碎。
+ */
 export function dig(obj: unknown, path: string): unknown {
   let cur: unknown = obj;
   for (const key of path.split(".")) {
@@ -103,4 +107,31 @@ export function randomDeviceId(): string {
   return Array.from(bytes)
     .map((b) => b.toString(16).padStart(2, "0"))
     .join("");
+}
+
+/** base64url 编码任意 JSON（用于构造 JWT 片段） */
+export function b64urlJson(value: unknown): string {
+  return b64urlEncode(JSON.stringify(value));
+}
+
+/** 构造一个不签名的 JWT（三段结构，仅用于 Google 自定义 claim 场景） */
+export function unsignedJwt(payload: Record<string, unknown>): string {
+  return `${b64urlJson({ alg: "none", typ: "JWT" })}.${b64urlJson(payload)}.`;
+}
+
+/** 取 JWT 的 key_id（头部 kid），拿不到返回空串 */
+export function jwtKeyId(token: string): string {
+  try {
+    const head = JSON.parse(b64urlDecode(token.split(".")[0]));
+    const kid = head?.kid;
+    return typeof kid === "string" ? kid.trim() : "";
+  } catch {
+    return "";
+  }
+}
+
+/** 从 JWT 里取 exp（秒），拿不到返回 0 */
+export function jwtExp(token: string): number {
+  const n = Number(decodeJwt(token)?.["exp"]);
+  return Number.isFinite(n) && n > 0 ? n : 0;
 }

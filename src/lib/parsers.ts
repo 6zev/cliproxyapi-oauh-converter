@@ -1,4 +1,13 @@
-import { decodeJwt, dig, isRecord, pickString, str } from "./utils";
+import {
+  decodeJwt,
+  dig,
+  isRecord,
+  jwtExp,
+  jwtKeyId,
+  pickString,
+  str,
+  unsignedJwt,
+} from "./utils";
 
 /* =========================================================================
  * Codex（OpenAI CLI）相关解析
@@ -14,14 +23,8 @@ export interface CodexInfo {
   refreshToken: string;
   expiresAt: string; // RFC3339
   lastRefresh: string;
-  /** 是否来自 auth.json 的 credentials 子对象（CLI 版），决定是否保留嵌套结构 */
+  /** 是否来自 auth.json 的 credentials/tokens 子对象 */
   nested: boolean;
-}
-
-function unixToRfc3339(sec: unknown): string {
-  const n = typeof sec === "number" ? sec : Number(sec);
-  if (!Number.isFinite(n) || n <= 0) return "";
-  return new Date(n * 1000).toISOString().replace(".000Z", "Z");
 }
 
 /** 从 auth.json / 嵌套 credentials / 直接对象 中抽取 Codex 令牌信息 */
@@ -160,6 +163,122 @@ export function parseClaude(raw: unknown): ClaudeInfo | null {
 }
 
 /* =========================================================================
+ * Google 系（Antigravity / Gemini CLI）共用工具
+ * ========================================================================= */
+
+/** 统一的时间字段解析：expiry_date / expires_at 可能是 ms 或 s */
+function parseGoogleExpiry(t: Record<string, unknown>): string {
+  const explicit = pickString(t, ["expired", "expires_at"]);
+  if (explicit) {
+    const n = Number(explicit);
+    if (Number.isFinite(n) && n > 1e11) return new Date(n).toISOString();
+    return explicit;
+  }
+  for (const key of ["expiry_date", "expiryDate", "expires_at_ms", "timestamp"]) {
+    const raw = t[key];
+    const n = Number(raw);
+    if (!Number.isFinite(n) || n <= 0) continue;
+    if (key === "timestamp") {
+      // Antigravity 写盘格式：timestamp 是签发毫秒 + expires_in 秒
+      const expiresIn = Number(t["expires_in"]);
+      if (Number.isFinite(expiresIn) && expiresIn > 0) return new Date(n + expiresIn * 1000).toISOString();
+      continue;
+    }
+    return new Date(n > 1e11 ? n : n * 1000).toISOString();
+  }
+  return "";
+}
+
+/** Google 系凭据里 email 的三个来源：显式字段 / id_token / access_token */
+function googleEmail(t: Record<string, unknown>, outer?: Record<string, unknown>): string {
+  const idClaims = decodeJwt(pickString(t, ["id_token", "idToken"])) ?? {};
+  const atClaims = decodeJwt(pickString(t, ["access_token", "accessToken"])) ?? {};
+  return (
+    pickString(t, ["email", "account.email"]) ||
+    pickString(outer ?? {}, ["email"]) ||
+    pickString(idClaims, ["email"]) ||
+    pickString(atClaims, ["email"]) ||
+    ""
+  );
+}
+
+function unwrapTokenCandidates(raw: Record<string, unknown>): Record<string, unknown>[] {
+  const candidates: Record<string, unknown>[] = [raw];
+  for (const key of ["token", "auth", "credentials", "installed", "web", "oauth"]) {
+    if (isRecord(raw[key])) candidates.push(raw[key] as Record<string, unknown>);
+  }
+  for (const key of ["accounts", "items", "creds"]) {
+    const list = raw[key];
+    if (Array.isArray(list) && isRecord(list[0])) candidates.push(list[0] as Record<string, unknown>);
+  }
+  return candidates;
+}
+
+/* =========================================================================
+ * Antigravity（Google Cloud Code）
+ *
+ * 真实文件形如（注意没有 email / project_id，只有 expiry_date 毫秒）：
+ * {
+ *   "access_token": "ya29...", "scope": "...", "token_type": "Bearer",
+ *   "id_token": "eyJ...", "expiry_date": 1794655045605, "refresh_token": "1//0e..."
+ * }
+ * ========================================================================= */
+
+export interface AntigravityInfo {
+  accessToken: string;
+  refreshToken: string;
+  idToken: string;
+  expiresAt: string;
+  email: string;
+  projectId: string;
+  expiresIn: number;
+  scope: string;
+  /** 是否为 cc/cpa 风格的 JWT（v1/<payload>.<sig>），而不是 Google 真 access token */
+  antigravityJwtStyle: boolean;
+}
+
+export function parseAntigravity(raw: unknown): AntigravityInfo | null {
+  if (!isRecord(raw)) return null;
+
+  for (const t of unwrapTokenCandidates(raw)) {
+    const accessToken = pickString(t, ["access_token", "accessToken", "id_token"]);
+    if (!accessToken) continue;
+    const refreshToken = pickString(t, ["refresh_token", "refreshToken"]);
+    const idToken = pickString(t, ["id_token", "idToken"]);
+
+    let expiresAt = parseGoogleExpiry(t);
+    if (!expiresAt) {
+      const exp = jwtExp(idToken) || jwtExp(accessToken);
+      if (exp) expiresAt = new Date(exp * 1000).toISOString();
+    }
+
+    const expiresInRaw = Number(dig(t, "expires_in"));
+    const expiresIn =
+      Number.isFinite(expiresInRaw) && expiresInRaw > 0
+        ? expiresInRaw
+        : Math.max(60, Math.round((Date.parse(expiresAt) - Date.now()) / 1000) || 3599);
+
+    const projectId =
+      pickString(t, ["project_id", "projectId", "cloudaicompanionProject", "quota_project_id"]) ||
+      pickString(decodeJwt(idToken) ?? {}, ["cloudaicompanion_project"]) ||
+      pickString(decodeJwt(accessToken) ?? {}, ["cloudaicompanion_project"]);
+
+    return {
+      accessToken,
+      refreshToken,
+      idToken,
+      expiresAt,
+      email: googleEmail(t, raw),
+      projectId,
+      expiresIn,
+      scope: pickString(t, ["scope"]),
+      antigravityJwtStyle: accessToken.startsWith("v1/") || accessToken.split(".").length === 2,
+    };
+  }
+  return null;
+}
+
+/* =========================================================================
  * Gemini CLI（oauth2 token 结构）→ CLIProxyAPI gemini-cli
  * ========================================================================= */
 
@@ -174,85 +293,17 @@ export interface GeminiInfo {
 
 export function parseGemini(raw: unknown): GeminiInfo | null {
   if (!isRecord(raw)) return null;
-  const t = isRecord(raw.token) ? raw.token : raw;
-  const accessToken = pickString(t, ["access_token", "accessToken"]);
-  const refreshToken = pickString(t, ["refresh_token", "refreshToken"]);
-  if (!accessToken) return null;
-
-  let expiresAt = pickString(t, ["expired", "expires_at", "expiresAt"]);
-  const expiryDate = pickString(t, ["expiry_date", "expiryDate"]);
-  if (!expiresAt && expiryDate) {
-    const ms = Number(expiryDate);
-    if (Number.isFinite(ms)) expiresAt = new Date(ms).toISOString();
-  }
-
-  const claims = decodeJwt(accessToken) ?? {};
-  const idToken = pickString(raw, ["id_token", "idToken"]);
-
-  return {
-    accessToken,
-    refreshToken,
-    projectId:
-      pickString(raw, ["project_id", "projectId", "cloudaicompanionProject"]) ||
-      pickString(claims, ["cloudaicompanion_project", "project_id"]),
-    email:
-      pickString(raw, ["email"]) ||
-      pickString(claims, ["email"]) ||
-      pickString(decodeJwt(idToken) ?? {}, ["email"]),
-    expiresAt,
-  };
-}
-
-/* =========================================================================
- * Antigravity（Google Cloud Code）
- *   常见来源：
- *   1) ~/.antigravity/.../oauth_creds.json  形似 {"access_token","refresh_token","expires_in","email","project_id"}
- *   2) 带 token 包装的 {"token": {...}}
- *   3) 部分导出工具产出的 {"auth":{"access_token":...}}
- * ========================================================================= */
-
-export interface AntigravityInfo {
-  accessToken: string;
-  refreshToken: string;
-  expiresAt: string;
-  email: string;
-  projectId: string;
-  expiresIn: number;
-}
-
-export function parseAntigravity(raw: unknown): AntigravityInfo | null {
-  if (!isRecord(raw)) return null;
-  const candidates: Record<string, unknown>[] = [raw];
-  for (const key of ["token", "auth", "credentials", "installed"]) {
-    if (isRecord(raw[key])) candidates.push(raw[key] as Record<string, unknown>);
-  }
-
-  for (const t of candidates) {
-    const accessToken = pickString(t, ["access_token", "accessToken", "id_token"]);
-    const refreshToken = pickString(t, ["refresh_token", "refreshToken"]);
+  for (const t of unwrapTokenCandidates(raw)) {
+    const accessToken = pickString(t, ["access_token", "accessToken"]);
     if (!accessToken) continue;
-
-    const claims = decodeJwt(pickString(t, ["id_token"])) ?? decodeJwt(accessToken) ?? {};
-    let expiresAt = pickString(t, ["expired", "expires_at", "expiresAt"]);
-    const exp = Number(claims["exp"]);
-    if (!expiresAt && Number.isFinite(exp) && exp > 0) expiresAt = new Date(exp * 1000).toISOString();
-    const expiresInRaw = Number(dig(t, "expires_in"));
-    if (!expiresAt && Number.isFinite(expiresInRaw) && expiresInRaw > 0) {
-      expiresAt = new Date(Date.now() + expiresInRaw * 1000).toISOString();
-    }
-
     return {
       accessToken,
-      refreshToken,
-      expiresAt,
-      email:
-        pickString(t, ["email", "account"]) ||
-        pickString(claims, ["email"]) ||
-        "",
+      refreshToken: pickString(t, ["refresh_token", "refreshToken"]),
       projectId:
-        pickString(t, ["project_id", "projectId", "cloudaicompanionProject", "quota_project_id"]) ||
-        pickString(claims, ["cloudaicompanion_project"]),
-      expiresIn: Number.isFinite(expiresInRaw) ? expiresInRaw : 0,
+        pickString(t, ["project_id", "projectId", "cloudaicompanionProject"]) ||
+        pickString(decodeJwt(accessToken) ?? {}, ["cloudaicompanion_project", "project_id"]),
+      email: googleEmail(t, raw),
+      expiresAt: parseGoogleExpiry(t),
     };
   }
   return null;
@@ -281,8 +332,125 @@ export function parseGoogleOAuthClient(raw: unknown): {
   };
 }
 
-export function codexExpiryFromJwt(accessToken: string): string {
-  const claims = decodeJwt(accessToken);
-  const exp = Number(claims?.["exp"]);
-  return Number.isFinite(exp) && exp > 0 ? unixToRfc3339(exp) : "";
+/* =========================================================================
+ * 通用：xAI Grok / Kimi / Meta Muse / Devin
+ *   这些 provider 的 auth 文件基本都是扁平字段，主要差别在 type 与文件名。
+ * ========================================================================= */
+
+export interface GenericOAuthInfo {
+  accessToken: string;
+  refreshToken: string;
+  idToken: string;
+  expiresAt: string;
+  email: string;
+  subject: string;
+  name: string;
+  scope: string;
+  tokenType: string;
+  expiresIn: number;
+  baseUrl: string;
+  domain: string;
+  deviceId: string;
+  clientId: string;
+}
+
+/** 从任意常见 OAuth 形状里抽取通用字段（含 access_token 才会返回） */
+export function parseGenericOAuth(raw: unknown): GenericOAuthInfo | null {
+  if (!isRecord(raw)) return null;
+  for (const t of unwrapTokenCandidates(raw)) {
+    const accessToken = pickString(t, ["access_token", "accessToken", "token.access_token"]);
+    if (!accessToken) continue;
+
+    const idToken = pickString(t, ["id_token", "idToken"]);
+    const claims = decodeJwt(idToken) ?? {};
+    const atClaims = decodeJwt(accessToken) ?? {};
+
+    let expiresAt = pickString(t, ["expired", "expires_at"]);
+    if (!expiresAt) {
+      const exp = jwtExp(idToken) || jwtExp(accessToken);
+      if (exp) expiresAt = new Date(exp * 1000).toISOString();
+    }
+    if (!expiresAt) expiresAt = parseGoogleExpiry(t);
+
+    const expiresInRaw = Number(dig(t, "expires_in"));
+    const expiresIn =
+      Number.isFinite(expiresInRaw) && expiresInRaw > 0
+        ? expiresInRaw
+        : Math.max(60, Math.round((Date.parse(expiresAt) - Date.now()) / 1000) || 3600);
+
+    return {
+      accessToken,
+      refreshToken: pickString(t, ["refresh_token", "refreshToken"]),
+      idToken,
+      expiresAt,
+      email:
+        pickString(t, ["email", "account.email", "profile.email", "user.email"]) ||
+        pickString(claims, ["email"]) ||
+        pickString(atClaims, ["email"]),
+      subject: pickString(t, ["sub", "subject", "user_id", "userId"]) || pickString(claims, ["sub"]),
+      name: pickString(t, ["name", "display_name", "displayName", "user.name"]) || pickString(claims, ["name"]),
+      scope: pickString(t, ["scope", "scopes"]),
+      tokenType: pickString(t, ["token_type"]) || "Bearer",
+      expiresIn,
+      baseUrl: pickString(t, ["base_url", "baseUrl", "api_base", "endpoint"]),
+      domain: pickString(t, ["domain", "host", "issuer"]),
+      deviceId: pickString(t, ["device_id", "deviceId"]),
+      clientId: pickString(t, ["client_id", "clientId"]),
+    };
+  }
+  return null;
+}
+
+/* =========================================================================
+ * Antigravity 增强：把 Google 真令牌烘成 cc/cpa 风格的 v1/<JWT>.<sig>
+ *
+ * Google 的 access_token（ya29.*）不是 JWT，Agy/Antigravity 兼容网关读不到
+ * 邮箱、密钥 id、过期时间；上游社区把 payload 烘进一个无签名 JWT，并把
+ * Google id_token 的 kid（DER 签名前缀）拼在后面当 "sig"。
+ * ========================================================================= */
+
+export interface AntigravityJwtPayload {
+  type: "antigravity";
+  email?: string;
+  exp: number;
+  iat: number;
+  sub?: string;
+  azp?: string;
+  /**
+   * 让 Google 把「项目 ID」直接猜出来（上游 loadCodeAssist 的 metadata 字段），
+   * 缺少 project_id 且用户也填不出时，可让 CLIProxyAPI 首次请求时自动获取。
+   */
+  projectId?: string;
+}
+
+/** 用 Google 的 id_token 信息构造 v1/<jwt>.<sig> 形态的 access token */
+export function bakeAntigravityAccessToken(info: AntigravityInfo): { token: string; warnings: string[] } {
+  const warnings: string[] = [];
+  const now = Math.floor(Date.now() / 1000);
+  const exp = jwtExp(info.idToken) || jwtExp(info.accessToken) || now + 2999;
+  const payload: AntigravityJwtPayload = {
+    type: "antigravity",
+    exp,
+    iat: Math.min(now, exp - 1),
+  };
+  if (info.email) payload.email = info.email;
+
+  const idClaims = decodeJwt(info.idToken) ?? {};
+  const sub = str(idClaims["sub"]);
+  if (sub) payload.sub = sub;
+  const azp = str(idClaims["azp"]);
+  if (azp) payload.azp = azp;
+
+  const jwt = unsignedJwt(payload as unknown as Record<string, unknown>);
+  const kid = jwtKeyId(info.idToken);
+  if (!kid) {
+    warnings.push("Google id_token 里没有 kid，无法还原 Google 的签名前缀（Google 可能直接拒绝这个 access token）");
+  }
+  return { token: `v1/${jwt}.${kid}`, warnings };
+}
+
+/** 取 access/id token 的 exp，输出 RFC3339（codex 的 expired 字段用） */
+export function codexExpiryFromJwt(token: string): string {
+  const exp = jwtExp(token);
+  return exp ? new Date(exp * 1000).toISOString() : "";
 }

@@ -1,0 +1,9 @@
+{
+  "access_token": "kimi_at_demo",
+  "refresh_token": "kimi_rt_demo",
+  "token_type": "Bearer",
+  "expired": "2027-01-01T00:00:00Z",
+  "domain": "kimi.com",
+  "base_url": "https://api.kimi.com/coding",
+  "device_id": "dev-1"
+}
